@@ -1,0 +1,206 @@
+import tkinter as tk
+from tkinter import ttk
+from tkinter import filedialog
+import json
+import os
+
+frame_comparaison = None  # Déclaration de la variable globale
+progression_fichiers = {}  # Dictionnaire pour stocker les progressions des fichiers importés
+
+def importer_fichiers():
+    dossier = "SAVE_IMPORT"
+    fichiers = [f for f in os.listdir(dossier) if f.endswith(".json")]
+    print("Fichiers JSON trouvés dans le dossier {}: {}".format(dossier, fichiers))
+    if fichiers:
+        contenu = {}
+        for fichier in fichiers:
+            chemin_fichier = os.path.join(dossier, fichier)
+            with open(chemin_fichier, "r", encoding="utf-8") as f:
+                contenu_fichier = json.load(f)
+                fusionner_contenu(contenu, contenu_fichier)
+                progression_fichiers[fichier] = get_progression(contenu_fichier)
+        afficher_groupes(contenu)
+
+def fusionner_contenu(contenu, contenu_fichier, nom_fichier):
+    for groupe, campagnes in contenu_fichier.items():
+        if groupe not in contenu:
+            contenu[groupe] = campagnes
+        else:
+            if isinstance(campagnes, dict):
+                if "Campaigns" in campagnes:
+                    if "Campaigns" not in contenu[groupe]:
+                        contenu[groupe]["Campaigns"] = campagnes["Campaigns"]
+                    else:
+                        contenu[groupe]["Campaigns"].update(campagnes["Campaigns"])
+                if "Emblems" in campagnes:
+                    if "Emblems" not in contenu[groupe]:
+                        contenu[groupe]["Emblems"] = campagnes["Emblems"]
+                    else:
+                        contenu[groupe]["Emblems"].update(campagnes["Emblems"])
+            elif isinstance(campagnes, list):
+                if "Emblems" not in contenu[groupe]:
+                    contenu[groupe]["Emblems"] = campagnes
+                else:
+                    contenu[groupe]["Emblems"].extend(campagnes)
+
+    progression_fichier = extraire_progression_emblemes(contenu_fichier)
+    progression_fichiers[nom_fichier] = progression_fichier
+
+def get_progression(contenu_fichier):
+    progression = {}
+    for groupe, campagnes in contenu_fichier.items():
+        if isinstance(campagnes, dict):
+            if "Campaigns" in campagnes:
+                for campagne, details_campagne in campagnes["Campaigns"].items():
+                    if "Emblems" in details_campagne:
+                        for embleme in details_campagne["Emblems"]:
+                            if "DisplayName" in embleme:
+                                nom_embleme = embleme["DisplayName"]
+                                if embleme.get("Completed", False):
+                                    progression[nom_embleme] = "☑"
+                                else:
+                                    value = embleme.get("Value", 0)
+                                    threshold = embleme.get("Threshold", 0)
+                                    progression[nom_embleme] = "{}/{}".format(value, threshold)
+            else:
+                if "Emblems" in campagnes:
+                    for embleme in campagnes["Emblems"]:
+                        if "DisplayName" in embleme:
+                            nom_embleme = embleme["DisplayName"]
+                            if embleme.get("Completed", False):
+                                progression[nom_embleme] = "☑"
+                            else:
+                                value = embleme.get("Value", 0)
+                                threshold = embleme.get("Threshold", 0)
+                                progression[nom_embleme] = "{}/{}".format(value, threshold)
+        elif isinstance(campagnes, list):
+            for embleme in campagnes:
+                if "DisplayName" in embleme:
+                    nom_embleme = embleme["DisplayName"]
+                    if embleme.get("Completed", False):
+                        progression[nom_embleme] = "☑"
+                    else:
+                        value = embleme.get("Value", 0)
+                        threshold = embleme.get("Threshold", 0)
+                        progression[nom_embleme] = "{}/{}".format(value, threshold)
+    return progression
+
+def afficher_groupes(contenu):
+    global frame_comparaison  # Référence à la variable globale
+
+    # Effacer le contenu actuel de l'onglet Comparaison
+    if frame_comparaison is not None:
+        frame_comparaison.destroy()
+
+    # Créer un nouveau cadre pour l'onglet Comparaison
+    frame_comparaison = ttk.Frame(notebook)
+    notebook.add(frame_comparaison, text="Comparaison")
+
+    # Créer une barre de défilement verticale
+    scrollbar_y = ttk.Scrollbar(frame_comparaison)
+    scrollbar_y.pack(side="right", fill="y")
+
+    # Créer un Treeview pour afficher les résultats avec la barre de défilement
+    treeview = ttk.Treeview(frame_comparaison, yscrollcommand=scrollbar_y.set)
+    treeview.pack(fill="both", expand=True)
+    scrollbar_y.config(command=treeview.yview)
+
+    # Configurer les colonnes du Treeview
+    colonnes = ["Emblèmes"]
+    for nom_fichier in progression_fichiers.keys():
+        colonnes.append(nom_fichier)
+    treeview["columns"] = colonnes
+    treeview.column("#0", width=300, minwidth=300, anchor="w")
+    for colonne in colonnes[1:]:
+        treeview.column(colonne, width=150, minwidth=100, anchor="center")
+
+    # Ajouter des en-têtes de colonnes
+    treeview.heading("#0", text="Emblèmes")
+    for i, colonne in enumerate(colonnes[1:], start=1):
+        treeview.heading(colonne, text=colonne)
+
+    # Variables pour l'indentation
+    indent_groupe = ""
+    indent_campagne = " " * 4
+    indent_embleme = " " * 8
+
+    # Parcourir les groupes dans le contenu fusionné
+    for groupe, campagnes in contenu.items():
+        # Ajouter le nom du groupe à l'arborescence avec l'indentation appropriée
+        groupe_id = treeview.insert("", "end", text="{}- {}".format(indent_groupe, groupe))
+
+        if isinstance(campagnes, dict):
+            # Vérifier si des campagnes existent dans le groupe
+            if "Campaigns" in campagnes:
+                # Parcourir les campagnes dans le groupe
+                for campagne, details_campagne in campagnes["Campaigns"].items():
+                    titre_campagne = details_campagne.get("Title", "Titre de campagne inconnu")
+                    # Ajouter le titre de la campagne à l'arborescence avec l'indentation appropriée
+                    campagne_id = treeview.insert(groupe_id, "end", text="{}- {}".format(indent_campagne, titre_campagne))
+
+                    # Vérifier si des emblèmes existent dans la campagne
+                    if "Emblems" in details_campagne:
+                        # Afficher les emblèmes de la campagne dans le Treeview avec l'indentation appropriée
+                        afficher_emblemes(details_campagne["Emblems"], treeview, campagne_id, indent_embleme)
+            else:
+                # Vérifier si des emblèmes existent dans le groupe
+                if "Emblems" in campagnes:
+                    # Afficher les emblèmes du groupe dans le Treeview avec l'indentation appropriée
+                    afficher_emblemes(campagnes["Emblems"], treeview, groupe_id, indent_embleme)
+        elif isinstance(campagnes, list):
+            # Afficher les emblèmes du groupe dans le Treeview avec l'indentation appropriée
+            afficher_emblemes(campagnes, treeview, groupe_id, indent_embleme)
+
+    # Mettre à jour le Treeview
+    treeview.update_idletasks()
+
+def afficher_emblemes(emblemes, treeview, parent_id, indent):
+    if isinstance(emblemes, list):
+        for embleme in emblemes:
+            if "DisplayName" in embleme:
+                nom_embleme = embleme["DisplayName"]
+                # Vérifier si l'emblème est terminé
+                if embleme.get("Completed", False):
+                    progression = "☑"
+                else:
+                    progression = ""
+                for nom_fichier, progressions in progression_fichiers.items():
+                    if nom_embleme in progressions:
+                        progression = progressions[nom_embleme]
+                        break
+
+                # Ajouter l'emblème et la progression dans le Treeview avec l'indentation appropriée
+                treeview.insert(parent_id, "end", text=nom_embleme, values=(progression,))
+    elif isinstance(emblemes, dict):
+        for _, sub_emblemes in emblemes.items():
+            afficher_emblemes(sub_emblemes, treeview, parent_id, indent)
+
+
+# Créer une fenêtre
+fenetre = tk.Tk()
+
+# Définir les dimensions de la fenêtre
+fenetre.geometry("800x600")
+
+# Définir le titre de la fenêtre
+fenetre.title("Ma première application")
+
+# Créer un widget Notebook pour les onglets
+notebook = ttk.Notebook(fenetre)
+
+# Onglet "Import"
+onglet_import = ttk.Frame(notebook)
+notebook.add(onglet_import, text="Import")
+
+bouton_importer = ttk.Button(onglet_import, text="Importer les fichiers JSON", command=importer_fichiers)
+bouton_importer.pack(padx=10, pady=10)
+
+# Créer un cadre initial pour l'onglet Comparaison
+frame_comparaison = ttk.Frame(notebook)
+notebook.add(frame_comparaison, text="Comparaison")
+
+# Afficher le widget Notebook
+notebook.pack(fill="both", expand=True)
+
+# Lancer la boucle principale
+fenetre.mainloop()
